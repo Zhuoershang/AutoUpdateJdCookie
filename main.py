@@ -511,7 +511,7 @@ async def get_verification_code(sms_webhook):
                 continue
             # 检查验证码有效性和时间有效性
             if not is_within_5_minutes(sms_timestamp):
-                logger.info(f"{验证码推送于{datetime.fromtimestamp(int(sms_timestamp)+28800).strftime('%Y-%m-%d %H:%M:%S')}--已过期超过5min")  # 输出到 stdout
+                logger.info(f"验证码推送于{datetime.fromtimestamp(int(sms_timestamp)+28800).strftime('%Y-%m-%d %H:%M:%S')}--已过期超过5min")  # 输出到 stdout
                 del_sms_data()  # 删除webhook上的所有信息
                 continue
             # 这里来解析的短信内容
