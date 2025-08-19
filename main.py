@@ -440,8 +440,14 @@ async def sms_recognition(page, user, mode):
             'Content-Type': 'application/json',
         }
         data = {"phone_number": user}
-        response = await send_request(url=sms_webhook, method="post", headers=headers, data=data)
-        verification_code = response['data']['code']
+        # response = await send_request(url=sms_webhook, method="post", headers=headers, data=data)
+        try:
+            response = await get_verification_code(sms_webhook)
+            verification_code = response['data']['code']
+        except (AttributeError, TypeError) as e:
+            raise Exception(f"验证码自动获取失败:{e}")
+        except Exception as e:
+            raise Exception(f"验证码自动获取失败:{e}")
 
     await asyncio.sleep(1)
     if not is_valid_verification_code(verification_code):
@@ -456,7 +462,107 @@ async def sms_recognition(page, user, mode):
 
     logger.info('点击提交中...')
     await page.click('a.btn')
-
+    
+async def get_verification_code(sms_webhook):
+    import time
+    from datetime import datetime, timedelta
+    MAX_WAIT_TIME = 60
+    WAIT_TIME = 1
+    start_time = time.time()
+    # key = request_body.phone_number
+    logger.info('正在请求获取验证码...')
+    while True:
+        '''优先判断是否超时'''
+        if time.time() - start_time > MAX_WAIT_TIME:
+            del_sms_data()
+            logger.info("验证码获取超时")  # 输出到 stdout
+            response_data = {
+                "err_code": 408,
+                "message": "获取验证码超时",
+                "data": {
+                    "code": 0
+                }
+            }
+            return json.dumps(response_data)
+            
+        """处理短信数据并生成响应"""
+        sms_data = send_request(url=sms_webhook, method="get", headers=headers)
+        logger.info(f"Webhook返回结果:{sms_data}")  # 输出到 stdout
+        if sms_data:
+            # 提取所需字段
+            # 如果短信为空，则get_sms_data()返回数据为空None，则直接跳过，继续下一轮获取。
+            try:
+                # phone_number = sms_data.get("phone_number", "")
+                sms_msg = sms_data.get("sms_msg", "")
+                sms_timestamp = sms_data.get("sms_time", "")
+            except (AttributeError, TypeError) as e:
+                sms_msg = 0
+                sms_timestamp = 0
+                del_sms_data()
+                logger.info(f"返回结果格式错误: {e}")
+            except Exception as e:
+                sms_msg = 0
+                sms_timestamp = 0
+                del_sms_data()
+                logger.info(f"返回结果错误: {e}")
+            # 验证必要字段
+            if not sms_msg or not sms_timestamp:
+                del_sms_data()
+                continue
+            # 检查验证码有效性和时间有效性
+            if not is_within_5_minutes(sms_timestamp):
+                logger.info(f"{验证码推送于{datetime.fromtimestamp(int(sms_timestamp)+28800).strftime('%Y-%m-%d %H:%M:%S')}--已过期超过5min")  # 输出到 stdout
+                del_sms_data()  # 删除webhook上的所有信息
+                continue
+            # 这里来解析的短信内容
+            re_pattern = re.compile(sms_code_pattern)
+            match = re_pattern.search(sms_msg)
+            if match:
+                code = match.group(0)
+                if code :
+                    del_sms_data()  # 删除webhook上的所有信息
+                    logger.info(f"验证码解析成功且有效:{code}")  # 输出到 stdout
+                    # 创建字典
+                    response_data = {
+                        "err_code": 0,
+                        "message": "Success",
+                        "data": {
+                            "code": code
+                        }
+                    }
+                    return json.dumps(response_data)
+            logger.info(f"验证码解析失败")  # 输出到 stdout
+        else:
+            logger.info(f"无效信息，再次尝试")  # 输出到 stdout
+        time.sleep(WAIT_TIME)
+        
+def del_sms_data():
+    """从 Webhook.site 删除所有的的短信数据"""
+    url = "https://webhook.site/token/b7522351-425c-477b-923f-a2faf086cd3d/request"
+    try:
+        response = send_request(url=url, method="delete", headers=headers)
+        response.raise_for_status()  # 检查HTTP错误
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.info(f"请求失败: {e}")
+        return None
+    except json.JSONDecodeError:
+        logger.info("响应不是有效的JSON格式")
+        return None
+def is_within_5_minutes(sms_timestamp):
+    import time
+    from datetime import datetime, timedelta
+    """检查时间戳是否在5分钟内"""
+    try:
+        # 将毫秒时间戳转换为秒
+        sms_time = datetime.fromtimestamp(int(sms_timestamp))
+        current_time = datetime.now()
+        
+        # 计算时间差
+        time_diff = current_time - sms_time
+        return time_diff <= timedelta(minutes=5)
+    except (ValueError, TypeError, OverflowError):
+        return False
 
 async def voice_verification(page, user, mode):
     from utils.consts import supported_voice_func
